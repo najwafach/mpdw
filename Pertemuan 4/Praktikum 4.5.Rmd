@@ -1,0 +1,475 @@
+---
+title: "Tugas MPDW P5"
+author: "najwafach"
+date: "2026-09-17"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+---
+
+
+Pembangkitan proses MA, AR, dan ARMA diawali dengan membangkitkan *white noise* sebanyak 300 data.
+
+```{r}
+set.seed(1234)
+wn <- rnorm(300)
+ts.plot(wn)
+```
+
+# No 1 - Proses MA(2)
+
+Proses MA(2) dapat dituliskan sebagai berikut:
+
+$$
+Y_t = e_t + \theta_1 e_{t-1} + \theta_2 e_{t-2}
+$$
+
+Akan dibangkitkan proses MA(2) dengan $\theta_1 = 0.4$ dan $\theta_2 = 0.6$ sebanyak 300 data.
+
+## Pembangkitan Manual
+
+Karena orde MA(2) membutuhkan dua nilai awal, dua data pertama *white noise* digunakan sebagai nilai awal.
+
+```{r}
+set.seed(1234)
+theta1 <- 0.4
+theta2 <- 0.6
+
+ma2 <- wn[1:2]
+for (i in 3:300) {
+  ma2[i] <- wn[i] + theta1 * wn[i - 1] + theta2 * wn[i - 2]
+}
+ma2
+```
+
+## Pembangkitan dengan `arima.sim`
+
+```{r}
+set.seed(1234)
+ma2.sim <- arima.sim(list(order = c(0, 0, 2), ma = c(theta1, theta2)), n = 300)
+ma2.sim
+```
+
+## Karakteristik MA(2)
+
+### Plot Time Series
+
+```{r}
+par(mfrow = c(1, 2))
+ts.plot(ma2, main = "MA(2) Manual")
+ts.plot(ma2.sim, main = "MA(2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot time series, kedua data MA(2) yang dibangkitkan (manual maupun `arima.sim`) terlihat stasioner dalam rataan karena berfluktuasi di sekitar nilai tengah yang konstan.
+
+### Plot ACF
+
+```{r}
+par(mfrow = c(1, 2))
+acf(ma2, main = "ACF MA(2) Manual")
+acf(ma2.sim, main = "ACF MA(2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot ACF, terlihat bahwa plot ACF *cuts off* setelah lag ke-2, sesuai dengan teori proses MA(2).
+
+### Plot PACF
+
+```{r}
+par(mfrow = c(1, 2))
+pacf(ma2, main = "PACF MA(2) Manual")
+pacf(ma2.sim, main = "PACF MA(2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot PACF, terlihat bahwa plot PACF cenderung *tails off* dan membentuk pola gelombang sinus, sesuai dengan teori proses MA.
+
+### Plot EACF
+
+```{r}
+TSA::eacf(ma2)
+TSA::eacf(ma2.sim)
+```
+
+Berdasarkan pola segitiga nol pada plot EACF, segitiga nol berada pada ordo AR(0) dan ordo MA(2), sesuai dengan model yang dibangkitkan.
+
+### Uji ADF (Augmented Dickey-Fuller)
+
+Selain identifikasi secara visual, kestasioneran dalam rataan juga diperiksa secara formal menggunakan uji ADF (Augmented Dickey-Fuller).
+
+```{r}
+tseries::adf.test(ma2)
+tseries::adf.test(ma2.sim)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+### Kesimpulan Kestasioneran
+
+Berdasarkan plot time series, ACF yang *cuts off* di lag ke-2, PACF yang *tails off*, serta hasil uji ADF pada kedua data (manual dan `arima.sim`) yang menghasilkan *p-value* lebih kecil dari taraf nyata 5% (tolak $H_0$), data MA(2) yang dibangkitkan bersifat stasioner (proses MA selalu stasioner untuk koefisien berhingga).
+
+### Scatterplot Antar Lag
+
+#### $Y_t$ dengan $Y_{t-1}$
+
+```{r}
+yt_ma <- ma2[-1]
+yt_1_ma <- ma2[-300]
+plot(y = yt_ma, x = yt_1_ma, main = "Yt vs Yt-1 (MA(2))")
+cor(yt_ma, yt_1_ma)
+```
+
+#### $Y_t$ dengan $Y_{t-2}$
+
+```{r}
+yt_ma2 <- ma2[-c(1, 2)]
+yt_2_ma <- ma2[-c(299, 300)]
+plot(y = yt_ma2, x = yt_2_ma, main = "Yt vs Yt-2 (MA(2))")
+cor(yt_ma2, yt_2_ma)
+```
+
+#### $Y_t$ dengan $Y_{t-3}$
+
+```{r}
+yt_ma3 <- ma2[-c(1, 2, 3)]
+yt_3_ma <- ma2[-c(298, 299, 300)]
+plot(y = yt_ma3, x = yt_3_ma, main = "Yt vs Yt-3 (MA(2))")
+cor(yt_ma3, yt_3_ma)
+```
+
+### Autokorelasi Teoritis MA(2)
+
+Untuk proses MA(2), autokorelasi teoritis dirumuskan sebagai berikut:
+
+$$
+\rho_1 = \frac{\theta_1 + \theta_1\theta_2}{1+\theta_1^2+\theta_2^2}, \quad
+\rho_2 = \frac{\theta_2}{1+\theta_1^2+\theta_2^2}, \quad
+\rho_k = 0 \;untuk\; k \ge 3
+$$
+
+```{r}
+denom_ma <- 1 + theta1^2 + theta2^2
+rho1_ma_teori <- (theta1 + theta1 * theta2) / denom_ma
+rho2_ma_teori <- theta2 / denom_ma
+rho3_ma_teori <- 0
+
+# Perbandingan dengan ACF teoritis bawaan R
+ARMAacf(ma = c(theta1, theta2), lag.max = 3)
+
+data.frame(
+  lag = 1:3,
+  empiris = c(cor(yt_ma, yt_1_ma), cor(yt_ma2, yt_2_ma), cor(yt_ma3, yt_3_ma)),
+  teoritis = c(rho1_ma_teori, rho2_ma_teori, rho3_ma_teori)
+)
+```
+
+Terlihat bahwa nilai autokorelasi hasil simulasi mendekati nilai autokorelasi teoritis, dan autokorelasi pada lag ke-3 mendekati nol sesuai teori.
+
+# No. 2 Proses AR(2)
+
+Proses AR(2) dapat dituliskan sebagai berikut:
+
+$$
+Y_t = \phi_1 Y_{t-1} + \phi_2 Y_{t-2} + e_t
+$$
+
+Akan dibangkitkan proses AR(2) dengan $\phi_1 = 0.5$ dan $\phi_2 = 0.2$ sebanyak 300 data.
+
+## Pembangkitan Manual
+
+```{r}
+set.seed(1234)
+phi1 <- 0.5
+phi2 <- 0.2
+
+n <- length(wn)
+ar2 <- c(1:n)
+ar2[1:2] <- wn[1:2]
+for (i in 3:n) {
+  ar2[i] <- phi1 * ar2[i - 1] + phi2 * ar2[i - 2] + wn[i]
+}
+ar2
+```
+
+## Pembangkitan dengan `arima.sim`
+
+```{r}
+set.seed(1234)
+ar2.sim <- arima.sim(list(order = c(2, 0, 0), ar = c(phi1, phi2)), n = 300)
+ar2.sim
+```
+
+## Karakteristik AR(2)
+
+### Plot Time Series
+
+```{r}
+par(mfrow = c(1, 2))
+ts.plot(ar2, main = "AR(2) Manual")
+ts.plot(ar2.sim, main = "AR(2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot time series, data AR(2) yang dibangkitkan terlihat stasioner dalam rataan.
+
+### Plot ACF
+
+```{r}
+par(mfrow = c(1, 2))
+acf(ar2, main = "ACF AR(2) Manual")
+acf(ar2.sim, main = "ACF AR(2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot ACF, terlihat bahwa plot ACF *tails off* dan cenderung membentuk pola gelombang, sesuai dengan teori proses AR.
+
+### Plot PACF
+
+```{r}
+par(mfrow = c(1, 2))
+pacf(ar2, main = "PACF AR(2) Manual")
+pacf(ar2.sim, main = "PACF AR(2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot PACF, terlihat bahwa plot PACF *cuts off* setelah lag ke-2, sesuai dengan teori proses AR(2).
+
+### Plot EACF
+
+```{r}
+TSA::eacf(ar2)
+TSA::eacf(ar2.sim)
+```
+
+Berdasarkan pola segitiga nol pada plot EACF, segitiga nol berada pada ordo AR(2) dan ordo MA(0), sesuai dengan model yang dibangkitkan.
+
+### Kesimpulan Kestasioneran
+
+Untuk AR(2), kondisi kestasioneran terpenuhi jika:
+
+```{r}
+phi1 + phi2 < 1
+phi2 - phi1 < 1
+abs(phi2) < 1
+```
+
+Karena ketiga syarat terpenuhi ($\phi_1+\phi_2=0.7<1$, $\phi_2-\phi_1=-0.3<1$, $|\phi_2|=0.2<1$), maka proses AR(2) yang dibangkitkan bersifat stasioner. Hal ini juga didukung oleh plot time series yang berfluktuasi di sekitar rataan konstan.
+
+Kestasioneran ini diperkuat pula dengan uji ADF (Augmented Dickey-Fuller).
+
+```{r}
+tseries::adf.test(ar2)
+tseries::adf.test(ar2.sim)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+Kedua data AR(2) (manual dan `arima.sim`) menghasilkan *p-value* yang lebih kecil dari taraf nyata 5%, sehingga tolak $H_0$ dan mengonfirmasi bahwa data **stasioner dalam rataan**, sejalan dengan syarat kestasioneran koefisien AR(2) yang telah diperiksa sebelumnya.
+
+### Scatterplot Antar Lag
+
+#### $Y_t$ dengan $Y_{t-1}$
+
+```{r}
+yt_ar <- ar2[-1]
+yt_1_ar <- ar2[-300]
+plot(y = yt_ar, x = yt_1_ar, main = "Yt vs Yt-1 (AR(2))")
+cor(yt_ar, yt_1_ar)
+```
+
+#### $Y_t$ dengan $Y_{t-2}$
+
+```{r}
+yt_ar2 <- ar2[-c(1, 2)]
+yt_2_ar <- ar2[-c(299, 300)]
+plot(y = yt_ar2, x = yt_2_ar, main = "Yt vs Yt-2 (AR(2))")
+cor(yt_ar2, yt_2_ar)
+```
+
+#### $Y_t$ dengan $Y_{t-3}$
+
+```{r}
+yt_ar3 <- ar2[-c(1, 2, 3)]
+yt_3_ar <- ar2[-c(298, 299, 300)]
+plot(y = yt_ar3, x = yt_3_ar, main = "Yt vs Yt-3 (AR(2))")
+cor(yt_ar3, yt_3_ar)
+```
+
+### Autokorelasi Teoritis AR(2)
+
+Autokorelasi teoritis AR(2) diperoleh melalui persamaan Yule-Walker:
+
+$$
+\rho_1 = \frac{\phi_1}{1-\phi_2}, \quad
+\rho_2 = \phi_2 + \phi_1\rho_1, \quad
+\rho_k = \phi_1\rho_{k-1} + \phi_2\rho_{k-2} \;untuk\; k \ge 3
+$$
+
+```{r}
+rho1_ar_teori <- phi1 / (1 - phi2)
+rho2_ar_teori <- phi2 + phi1 * rho1_ar_teori
+rho3_ar_teori <- phi1 * rho2_ar_teori + phi2 * rho1_ar_teori
+
+# Perbandingan dengan ACF teoritis bawaan R
+ARMAacf(ar = c(phi1, phi2), lag.max = 3)
+
+data.frame(
+  lag = 1:3,
+  empiris = c(cor(yt_ar, yt_1_ar), cor(yt_ar2, yt_2_ar), cor(yt_ar3, yt_3_ar)),
+  teoritis = c(rho1_ar_teori, rho2_ar_teori, rho3_ar_teori)
+)
+```
+
+Terlihat bahwa nilai autokorelasi hasil simulasi mendekati nilai autokorelasi teoritis, dan autokorelasi meluruh secara eksponensial/berosilasi sesuai teori proses AR(2).
+
+
+# No. 3 - Proses ARMA(2,2)
+
+Proses ARMA(2,2) dapat dituliskan sebagai berikut:
+
+$$
+Y_t = \phi_1 Y_{t-1} + \phi_2 Y_{t-2} + e_t + \theta_1 e_{t-1} + \theta_2 e_{t-2}
+$$
+
+Akan dibangkitkan proses ARMA(2,2) dengan $\theta_1=0.4$, $\theta_2=0.6$, $\phi_1=0.5$, dan $\phi_2=0.2$ sebanyak 300 data.
+
+## Pembangkitan Manual
+
+```{r}
+set.seed(1234)
+n <- length(wn)
+arma22 <- c(1:n)
+arma22[1:2] <- wn[1:2]
+for (i in 3:n) {
+  arma22[i] <- phi1 * arma22[i - 1] + phi2 * arma22[i - 2] +
+    wn[i] + theta1 * wn[i - 1] + theta2 * wn[i - 2]
+}
+arma22
+```
+
+## Pembangkitan dengan `arima.sim`
+
+```{r}
+set.seed(1234)
+arma22.sim <- arima.sim(
+  list(order = c(2, 0, 2), ar = c(phi1, phi2), ma = c(theta1, theta2)),
+  n = 300
+)
+arma22.sim
+```
+
+## Karakteristik ARMA(2,2)
+
+### Plot Time Series
+
+```{r}
+par(mfrow = c(1, 2))
+ts.plot(arma22, main = "ARMA(2,2) Manual")
+ts.plot(arma22.sim, main = "ARMA(2,2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot time series, data ARMA(2,2) yang dibangkitkan terlihat stasioner dalam rataan.
+
+### Plot ACF
+
+```{r}
+par(mfrow = c(1, 2))
+acf(arma22, main = "ACF ARMA(2,2) Manual")
+acf(arma22.sim, main = "ACF ARMA(2,2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot ACF, terlihat pola *tails off*, sesuai dengan teori proses ARMA.
+
+### Plot PACF
+
+```{r}
+par(mfrow = c(1, 2))
+pacf(arma22, main = "PACF ARMA(2,2) Manual")
+pacf(arma22.sim, main = "PACF ARMA(2,2) arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot PACF, terlihat pola *tails off* juga, sesuai dengan teori proses ARMA (kedua plot ACF dan PACF sama-sama meluruh, tidak *cuts off* tegas).
+
+### Plot EACF
+
+```{r}
+TSA::eacf(arma22)
+TSA::eacf(arma22.sim)
+```
+
+Berdasarkan pola segitiga nol pada plot EACF, segitiga nol berada pada ordo AR(2) dan ordo MA(2), sesuai dengan model yang dibangkitkan.
+
+### Uji ADF (Augmented Dickey-Fuller)
+
+Kestasioneran dalam rataan pada proses ARMA(2,2) juga diperiksa secara formal menggunakan uji ADF.
+
+```{r}
+tseries::adf.test(arma22)
+tseries::adf.test(arma22.sim)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+### Kesimpulan Kestasioneran
+
+Karena komponen AR pada model ini sama dengan AR(2) sebelumnya ($\phi_1=0.5$, $\phi_2=0.2$) yang telah memenuhi syarat kestasioneran, maka proses ARMA(2,2) yang dibangkitkan juga bersifat stasioner. Hal ini didukung oleh plot time series yang berfluktuasi di sekitar rataan konstan, plot ACF dan PACF yang meluruh (*tails off*), serta hasil uji ADF pada kedua data yang menghasilkan *p-value* lebih kecil dari taraf nyata 5% (tolak $H_0$).
+
+### Scatterplot Antar Lag
+
+#### $Y_t$ dengan $Y_{t-1}$
+
+```{r}
+yt_arma <- arma22[-1]
+yt_1_arma <- arma22[-300]
+plot(y = yt_arma, x = yt_1_arma, main = "Yt vs Yt-1 (ARMA(2,2))")
+cor(yt_arma, yt_1_arma)
+```
+
+#### $Y_t$ dengan $Y_{t-2}$
+
+```{r}
+yt_arma2 <- arma22[-c(1, 2)]
+yt_2_arma <- arma22[-c(299, 300)]
+plot(y = yt_arma2, x = yt_2_arma, main = "Yt vs Yt-2 (ARMA(2,2))")
+cor(yt_arma2, yt_2_arma)
+```
+
+#### $Y_t$ dengan $Y_{t-3}$
+
+```{r}
+yt_arma3 <- arma22[-c(1, 2, 3)]
+yt_3_arma <- arma22[-c(298, 299, 300)]
+plot(y = yt_arma3, x = yt_3_arma, main = "Yt vs Yt-3 (ARMA(2,2))")
+cor(yt_arma3, yt_3_arma)
+```
+
+### Autokorelasi Teoritis ARMA(2,2)
+
+Untuk model ARMA(p,q) dengan orde lebih dari 1, bentuk tertutup autokorelasi teoritis cukup rumit, sehingga nilai teoritis dihitung menggunakan fungsi `ARMAacf()` yang tersedia pada R.
+
+```{r}
+rho_arma_teori <- ARMAacf(ar = c(phi1, phi2), ma = c(theta1, theta2), lag.max = 3)
+rho_arma_teori
+
+data.frame(
+  lag = 1:3,
+  empiris = c(cor(yt_arma, yt_1_arma), cor(yt_arma2, yt_2_arma), cor(yt_arma3, yt_3_arma)),
+  teoritis = as.numeric(rho_arma_teori[2:4])
+)
+```
+
+Terlihat bahwa nilai autokorelasi hasil simulasi mendekati nilai autokorelasi teoritis dari fungsi `ARMAacf()`, dan pola autokorelasi meluruh (*tails off*) sesuai dengan karakteristik proses ARMA.
+
+
