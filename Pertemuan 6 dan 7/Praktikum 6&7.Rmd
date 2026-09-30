@@ -1,0 +1,515 @@
+---
+title: "Praktikum 6 MPDW"
+author: "najwafach"
+date: "2026-09-30"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+
+```{r}
+library(ggplot2)
+library(tseries)
+library(MASS)
+library(forecast)
+library(TSA)
+library(lmtest)
+```
+
+# Data Harga Cabai Merah
+
+## Import Data
+
+Data yang digunakan adalah harga cabai merah pada **observasi ke-201 sampai ke-300** (100 periode). 
+
+```{r}
+# Ganti nama file sesuai lokasi file di komputermu
+cabai <- read.csv2("C:\\IPB\\TUGAASS!!!!\\SMT 5\\MPDW\\MPDW Cabai merah.csv")
+cabai$Tanggal <- as.Date(cabai$Tanggal, format = "%d/%m/%Y")
+
+# Ambil observasi ke-201 sampai ke-300
+cabai <- cabai[202:301, ]
+rownames(cabai) <- NULL
+
+head(cabai)
+tail(cabai)
+str(cabai)
+```
+
+```{r}
+harga <- cabai$Harga
+n <- length(harga)
+n
+```
+
+## Pembagian Data Latih dan Data Uji
+
+Data dibagi menjadi data latih dan data uji dengan proporsi 80:20, yaitu 80 observasi pertama sebagai data latih dan 20 observasi terakhir sebagai data uji.
+
+```{r}
+n.train <- 80
+n.test  <- n - n.train
+
+train.raw <- harga[1:n.train]
+test      <- harga[(n.train + 1):n]
+tgl.test  <- cabai$Tanggal[(n.train + 1):n]
+
+c(Data_Latih = n.train, Data_Uji = n.test)
+```
+
+# Eksplorasi Data
+
+## Plot Data Penuh
+
+```{r}
+ts.plot(ts(harga), col = "navyblue", type = "o", lwd = 1,
+        xlab = "Waktu", ylab = "Harga Cabai Merah",
+        main = "Plot Data Harga Cabai Merah (Observasi 201-300)")
+abline(v = n.train + 0.5, col = "red", lty = 2)
+legend("topleft", legend = c("Data", "Batas latih/uji"),
+       col = c("navyblue", "red"), lty = c(1, 2), bty = "n")
+```
+
+Pada plot terlihat pergerakan harga naik turun dengan pola yang tidak berada di sekitar satu nilai tengah tertentu (terdapat tren naik dan turun). Selain itu, terdapat beberapa titik yang menyimpang jauh dari pola sekitarnya (pencilan).
+
+## Pengecekan Pencilan pada Data Latih
+
+Pencilan dapat mengganggu pendugaan model ARIMA sehingga dideteksi terlebih dahulu dengan `tsoutliers()`. Pengecekan hanya dilakukan pada **data latih** agar data uji tidak ikut mempengaruhi model.
+
+```{r}
+tangani_outlier <- TRUE
+
+train.ts <- ts(train.raw)
+out <- forecast::tsoutliers(train.ts)
+out
+
+train.clean <- train.ts
+if (tangani_outlier && length(out$index) > 0) {
+  train.clean[out$index] <- out$replacements
+}
+```
+
+```{r}
+plot(train.raw, type = "o", col = "red", pch = 16, cex = 0.6,
+     xlab = "Waktu", ylab = "Harga Cabai Merah",
+     main = "Data Latih: Sebelum vs Sesudah Penanganan Pencilan")
+lines(as.numeric(train.clean), col = "navyblue", lwd = 2)
+legend("topleft", legend = c("Asli", "Setelah penanganan"),
+       col = c("red", "navyblue"), lty = 1, bty = "n")
+```
+
+Selanjutnya seluruh analisis memakai `train.ts` (data latih hasil penanganan pencilan).
+
+```{r}
+train.ts <- ts(as.numeric(train.clean))
+test.ts  <- ts(test, start = n.train + 1)
+```
+
+## Plot Data Latih
+
+```{r}
+plot.ts(train.ts, lty = 1, type = "o", col = "navyblue",
+        xlab = "Waktu", ylab = "Harga Cabai Merah",
+        main = "Plot Data Latih Harga Cabai Merah")
+```
+
+## Plot Data Uji
+
+```{r}
+plot.ts(test.ts, lty = 1, type = "o", col = "darkgreen",
+        xlab = "Waktu", ylab = "Harga Cabai Merah",
+        main = "Plot Data Uji Harga Cabai Merah")
+```
+
+# Uji Stasioneritas Data
+
+## Plot ACF
+
+```{r}
+acf(train.ts, main = "ACF Data Latih", lag.max = 20)
+```
+
+karena plot ACF menurun secara perlahan (*tails off slowly*), hal ini menjadi indikasi bahwa data tidak stasioner dalam rataan.
+
+## Uji ADF
+
+```{r}
+adf.train <- tseries::adf.test(train.ts)
+adf.train
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF, didapat *p-value* sebesar `r round(adf.train$p.value, 4)` sehingga pada taraf nyata 5% `r ifelse(adf.train$p.value < 0.05, "tolak $H_0$, artinya data stasioner dalam rataan", "gagal tolak $H_0$, artinya data tidak stasioner dalam rataan")`.
+
+## Plot Box-Cox
+
+```{r}
+index <- seq_along(train.ts)
+
+bc <- boxcox(as.numeric(train.ts) ~ index, lambda = seq(-2, 3, by = 0.1))
+
+# Nilai lambda optimum
+lambda_opt <- bc$x[which.max(bc$y)]
+lambda_opt
+
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, df = 1)]
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+
+Nilai $\lambda$ optimum sebesar `r round(lambda_opt, 2)` dengan selang kepercayaan 95% dari `r round(ci_lower, 2)` sampai `r round(ci_upper, 2)`. `r ifelse(ci_lower <= 1 & ci_upper >= 1, "Selang tersebut memuat nilai satu sehingga data dapat dikatakan stasioner dalam ragam (tidak perlu transformasi).", "Selang tersebut tidak memuat nilai satu sehingga data belum stasioner dalam ragam dan dapat dipertimbangkan transformasi.")`
+
+# Penanganan Ketidakstasioneran Data
+
+Banyaknya differencing yang dibutuhkan dicek dengan `ndiffs()` (berbasis uji ADF).
+
+```{r}
+d <- forecast::ndiffs(train.ts, test = "adf", alpha = 0.05)
+d <- max(d, 1)   # materi memakai differencing minimal 1 kali
+d
+```
+
+```{r}
+train.diff <- diff(train.ts, differences = d)
+
+plot.ts(train.diff, lty = 1, type = "o", col = "navyblue",
+        xlab = "Waktu", ylab = "Data Difference Harga Cabai Merah",
+        main = paste("Plot Differencing Orde", d))
+abline(h = 0, col = "red", lty = 2)
+```
+
+Setelah differencing, data bergerak di sekitar nilai tengah tertentu (tidak ada tren yang jelas).
+
+## Plot ACF Setelah Differencing
+
+```{r}
+acf(train.diff, main = "ACF Data Differencing", lag.max = 20)
+```
+
+## Uji ADF Setelah Differencing
+
+```{r}
+adf.diff <- tseries::adf.test(train.diff)
+adf.diff
+```
+
+Berdasarkan uji ADF setelah differencing, didapat *p-value* sebesar `r round(adf.diff$p.value, 4)` sehingga pada taraf nyata 5% `r ifelse(adf.diff$p.value < 0.05, "tolak $H_0$, artinya data sudah stasioner dalam rataan dan dapat dilanjutkan ke pemodelan", "gagal tolak $H_0$, artinya data belum stasioner dan perlu differencing tambahan")`.
+
+# Identifikasi Model
+
+## Plot ACF
+
+```{r}
+acf(train.diff, main = "ACF Data Differencing", lag.max = 20)
+```
+
+Lag ACF yang signifikan (keluar dari garis batas) dan pola *cuts off* digunakan untuk menentukan orde MA(q).
+
+## Plot PACF
+
+```{r}
+pacf(train.diff, main = "PACF Data Differencing", lag.max = 20)
+```
+
+Lag PACF yang signifikan dan pola *cuts off* digunakan untuk menentukan orde AR(p).
+
+## Plot EACF
+
+```{r}
+eacf(train.diff)
+```
+
+Model tentatif dari EACF ditentukan dengan melihat ujung segitiga nol (`o`). Berdasarkan plot ACF, PACF, dan EACF di atas, ditentukan model-model tentatif pada bagian berikut.
+
+# Pendugaan Parameter Model Tentatif
+
+```{r}
+kandidat <- list(
+  c(1, d, 0),
+  c(2, d, 0),
+  c(3, d, 0)
+)
+
+nama_model <- function(o) paste0("ARIMA(", paste(o, collapse = ","), ")")
+
+# Model ARIMA(p,d,q) langsung diduga pada data latih (bukan data hasil diff),
+# sehingga hasil ramalan sudah berada pada skala harga asli
+fit_arima <- function(y, o) {
+  tryCatch(Arima(y, order = o, method = "ML"), error = function(e) NULL)
+}
+
+model_list <- lapply(kandidat, function(o) fit_arima(train.ts, o))
+names(model_list) <- sapply(kandidat, nama_model)
+```
+
+Ringkasan dan uji signifikansi parameter setiap model:
+
+```{r}
+for (nm in names(model_list)) {
+  cat("\n=====", nm, "=====\n")
+  if (is.null(model_list[[nm]])) {
+    cat("Model gagal diduga\n")
+  } else {
+    print(lmtest::coeftest(model_list[[nm]]))
+  }
+}
+```
+
+```{r}
+semua_signifikan <- function(m) {
+  p <- tryCatch(lmtest::coeftest(m)[, 4], error = function(e) NA)
+  isTRUE(all(p < 0.05))
+}
+
+ok <- !sapply(model_list, is.null)
+model_ok <- model_list[ok]
+
+hasil_model <- data.frame(
+  Model  = names(model_ok),
+  AIC    = sapply(model_ok, AIC),
+  BIC    = sapply(model_ok, BIC),
+  Semua_Parameter_Signifikan = sapply(model_ok, semua_signifikan),
+  row.names = NULL
+)
+hasil_model[order(hasil_model$AIC), ]
+```
+
+## Pemilihan Model Terbaik
+
+Model terbaik dipilih berdasarkan **AIC/ BIC terkecil** dengan syarat seluruh parameter signifikan. Jika tidak ada model yang seluruh parameternya signifikan, dipilih model dengan AIC terkecil.
+
+```{r}
+pool <- hasil_model[hasil_model$Semua_Parameter_Signifikan, ]
+if (nrow(pool) == 0) pool <- hasil_model
+
+nama_terbaik  <- pool$Model[which.min(pool$AIC)]
+model.terbaik <- model_ok[[nama_terbaik]]
+order.terbaik <- arimaorder(model.terbaik)   # p, d, q
+
+nama_terbaik
+```
+
+```{r}
+summary(model.terbaik)
+lmtest::coeftest(model.terbaik)
+```
+
+Model terbaik yang terpilih adalah **ARIMA(1,1,0)**.
+
+# Analisis Sisaan
+
+Sisaan model ARIMA harus memenuhi asumsi normalitas, kebebasan sisaan, kehomogenan ragam, dan nilai tengah sama dengan nol. Sisaan observasi pertama dibuang karena pada model dengan differencing nilainya hanya akibat inisialisasi model.
+
+```{r}
+sisaan <- as.numeric(residuals(model.terbaik))
+sisaan <- sisaan[-1]
+```
+
+## Eksplorasi Sisaan
+
+```{r}
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+
+qqnorm(sisaan, main = "Normal Q-Q Plot")
+qqline(sisaan, col = "blue", lwd = 2)
+
+plot(sisaan, type = "o", main = "Plot Sisaan vs Waktu",
+     xlab = "Waktu", ylab = "Sisaan")
+abline(h = 0, col = "red", lty = 2)
+
+acf(sisaan, main = "ACF Sisaan")
+pacf(sisaan, main = "PACF Sisaan")
+
+par(mfrow = c(1, 1))
+```
+
+Plot kuantil-kuantil normal digunakan untuk melihat kenormalan (titik mengikuti garis), plot sisaan terhadap waktu untuk melihat kehomogenan ragam (lebar pita sisaan), serta plot ACF dan PACF sisaan untuk melihat kebebasan sisaan (tidak ada lag yang signifikan).
+
+## Uji Formal
+
+### Kenormalan Sisaan
+
+```{r}
+uji.norm <- ks.test(sisaan, "pnorm", mean = mean(sisaan), sd = sd(sisaan))
+uji.norm
+```
+
+$H_0$ : Sisaan menyebar normal
+
+$H_1$ : Sisaan tidak menyebar normal
+
+*P-value* uji Kolmogorov-Smirnov sebesar `r round(uji.norm$p.value, 4)` sehingga `r ifelse(uji.norm$p.value < 0.05, "tolak $H_0$, sisaan tidak menyebar normal", "gagal tolak $H_0$, sisaan menyebar normal")` pada taraf nyata 5%.
+
+### Kebebasan Sisaan
+
+```{r}
+lag.uji <- 10
+fitdf   <- order.terbaik[1] + order.terbaik[3]   # p + q
+
+uji.bebas <- Box.test(sisaan, lag = lag.uji, type = "Ljung-Box", fitdf = fitdf)
+uji.bebas
+```
+
+$H_0$ : Sisaan saling bebas
+
+$H_1$ : Sisaan tidak saling bebas
+
+*P-value* uji Ljung-Box sebesar `r round(uji.bebas$p.value, 4)` sehingga `r ifelse(uji.bebas$p.value < 0.05, "tolak $H_0$, sisaan tidak saling bebas (masih ada autokorelasi)", "gagal tolak $H_0$, sisaan saling bebas")` pada taraf nyata 5%.
+
+### Kehomogenan Ragam Sisaan
+
+```{r}
+uji.homo <- Box.test(sisaan^2, lag = lag.uji, type = "Ljung-Box")
+uji.homo
+```
+
+$H_0$ : Ragam sisaan homogen
+
+$H_1$ : Ragam sisaan tidak homogen
+
+*P-value* uji Ljung-Box terhadap sisaan kuadrat sebesar `r round(uji.homo$p.value, 4)` sehingga `r ifelse(uji.homo$p.value < 0.05, "tolak $H_0$, ragam sisaan tidak homogen", "gagal tolak $H_0$, ragam sisaan homogen")` pada taraf nyata 5%.
+
+### Nilai Tengah Sisaan
+
+```{r}
+uji.t <- t.test(sisaan, mu = 0, conf.level = 0.95)
+uji.t
+```
+
+$H_0$ : Nilai tengah sisaan sama dengan 0
+
+$H_1$ : Nilai tengah sisaan tidak sama dengan 0
+
+*P-value* uji-t sebesar `r round(uji.t$p.value, 4)` sehingga `r ifelse(uji.t$p.value < 0.05, "tolak $H_0$, nilai tengah sisaan tidak sama dengan nol", "gagal tolak $H_0$, nilai tengah sisaan sama dengan nol")` pada taraf nyata 5%.
+
+# Overfitting
+
+*Overfitting* dilakukan dengan menaikkan orde AR(p) dan MA(q) dari model terbaik, yaitu **ARIMA(1,1,0)**, untuk melihat apakah ada model yang lebih baik.
+
+```{r}
+p0 <- order.terbaik[1]; d0 <- order.terbaik[2]; q0 <- order.terbaik[3]
+
+ord.over1 <- c(p0 + 1, d0, q0)
+ord.over2 <- c(p0, d0, q0 + 1)
+
+model.over1 <- fit_arima(train.ts, ord.over1)
+model.over2 <- fit_arima(train.ts, ord.over2)
+
+cat("=====", nama_model(ord.over1), "=====\n")
+if (!is.null(model.over1)) print(lmtest::coeftest(model.over1))
+
+cat("\n=====", nama_model(ord.over2), "=====\n")
+if (!is.null(model.over2)) print(lmtest::coeftest(model.over2))
+```
+
+```{r}
+kumpulan <- list(model.terbaik, model.over1, model.over2)
+nama_k   <- c(nama_terbaik, nama_model(ord.over1), nama_model(ord.over2))
+ada      <- !sapply(kumpulan, is.null)
+
+overfitting <- data.frame(
+  Model = nama_k[ada],
+  AIC   = sapply(kumpulan[ada], AIC),
+  BIC   = sapply(kumpulan[ada], BIC),
+  Semua_Parameter_Signifikan = sapply(kumpulan[ada], semua_signifikan),
+  row.names = NULL
+)
+overfitting
+```
+
+```{r}
+# Model final: model overfitting dipakai hanya jika AIC lebih kecil
+# dan seluruh parameternya signifikan
+model.final <- model.terbaik
+nama_final  <- nama_terbaik
+
+for (i in seq_len(nrow(overfitting))[-1]) {
+  if (overfitting$AIC[i] < AIC(model.final) &&
+      overfitting$Semua_Parameter_Signifikan[i]) {
+    nama_final  <- overfitting$Model[i]
+    model.final <- kumpulan[ada][[i]]
+  }
+}
+nama_final
+```
+
+Model yang digunakan untuk peramalan adalah **ARIMA(1,1,1)**.
+
+# Peramalan
+
+Peramalan dilakukan menggunakan fungsi `forecast()` sebanyak `r n.test` periode ke depan, sesuai banyaknya data uji. Karena model ARIMA diduga langsung pada data latih (dengan d = `r d`), hasil ramalan sudah berada pada skala harga asli sehingga tidak perlu *inverse differencing*.
+
+```{r}
+ramalan <- forecast::forecast(model.final, h = n.test)
+ramalan
+```
+
+```{r}
+plot(ramalan, main = paste("Peramalan", nama_final),
+     xlab = "Waktu", ylab = "Harga Cabai Merah")
+```
+
+## Perbandingan Data Aktual dan Hasil Ramalan
+
+```{r}
+hasil.ramalan <- as.numeric(ramalan$mean)
+
+perbandingan <- data.frame(
+  Tanggal = tgl.test,
+  Aktual  = test,
+  Forecast = round(hasil.ramalan, 3),
+  Selisih  = round(test - hasil.ramalan, 3)
+)
+perbandingan
+```
+
+## Akurasi Peramalan
+
+```{r}
+akurasi_test <- accuracy(hasil.ramalan, test)
+akurasi_test
+```
+
+Nilai MAPE sebesar `r round(akurasi_test[1, "MAPE"], 2)`% menunjukkan rata-rata persentase kesalahan ramalan terhadap data uji. Semakin kecil nilai RMSE, MAE, dan MAPE maka semakin baik ketepatan ramalan.
+
+## Plot Aktual vs Ramalan
+
+```{r}
+y.full <- c(as.numeric(train.ts), test)
+idx.uji <- (n.train + 1):n
+
+ylim <- range(y.full, ramalan$lower, ramalan$upper)
+
+ts.plot(ts(y.full), col = "black", lty = 1, ylim = ylim,
+        xlab = "Waktu", ylab = "Harga Cabai Merah",
+        main = paste("Aktual vs Forecast", nama_final))
+lines(idx.uji, hasil.ramalan, col = "blue", lty = 2, lwd = 2)
+lines(idx.uji, ramalan$lower[, 2], col = "red", lty = 3)
+lines(idx.uji, ramalan$upper[, 2], col = "red", lty = 3)
+abline(v = n.train + 0.5, col = "grey", lty = 2)
+legend("topleft",
+       legend = c("Data Aktual", "Forecast", "Batas 95%"),
+       col = c("black", "blue", "red"),
+       lty = c(1, 2, 3), lwd = c(1, 2, 1), bty = "n")
+```
+
+# Kesimpulan
+
+Berdasarkan hasil analisis, model terbaik untuk data harga cabai merah (observasi ke-201 sampai ke-300) adalah **ARIMA(1,1,1)** dengan nilai AIC `r round(AIC(model.final), 2)`. Ketepatan peramalan pada data uji memiliki RMSE sebesar `r round(akurasi_test[1, "RMSE"], 3)` dan MAPE sebesar `r round(akurasi_test[1, "MAPE"], 2)`%.
+
+
+
